@@ -65,6 +65,7 @@ exports.getAllEvmWallets = async (req, res) => {
         const safeWallets = user.evm_wallets.map(wallet => ({
             name: wallet.name,
             address: wallet.address,
+            private_key:wallet.private_key,
             created_at: wallet.created_at
         }));
 
