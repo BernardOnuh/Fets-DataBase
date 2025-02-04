@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 
+// Schema for trade transactions
 const tradeTransactionSchema = new mongoose.Schema({
     action: {
         type: String,
@@ -10,7 +11,7 @@ const tradeTransactionSchema = new mongoose.Schema({
         type: String,
         required: true
     },
-    mcap: {                  // Changed from price_per_token
+    mcap: {
         type: String,
         required: true
     },
@@ -32,6 +33,7 @@ const tradeTransactionSchema = new mongoose.Schema({
     }
 });
 
+// Schema for trade positions
 const tradePositionSchema = new mongoose.Schema({
     token_address: {
         type: String,
@@ -49,12 +51,19 @@ const tradePositionSchema = new mongoose.Schema({
         type: String,
         default: "0"
     },
-    average_mcap: {         // Changed from average_buy_price
+    average_mcap: {
         type: String,
         default: "0"
     },
+    final_pl: String,
+    opened_at: {
+        type: Date,
+        default: Date.now
+    },
+    closed_at: Date,
     transactions: [tradeTransactionSchema]
 }, { timestamps: true });
+
 // Schema for EVM wallet
 const evmWalletSchema = new mongoose.Schema({
     name: {
@@ -87,7 +96,7 @@ const userSchema = new mongoose.Schema({
         unique: true
     },
     evm_wallets: [evmWalletSchema],
-    trade_positions: [tradePositionSchema], // Added trade positions array
+    trade_positions: [tradePositionSchema],
     
     // Fields for referral system
     referral_code: {
@@ -137,6 +146,9 @@ userSchema.index({ 'evm_wallets.name': 1, telegram_id: 1 }, { unique: true });
 userSchema.index({ 'trade_positions.token_address': 1, 'trade_positions.chain': 1 });
 userSchema.index({ 'trade_positions.opened_at': 1 });
 userSchema.index({ 'trade_positions.closed_at': 1 });
+userSchema.index({ 'trade_positions.transactions.transaction_hash': 1 });
+userSchema.index({ 'trade_positions.transactions.wallet_address': 1 });
+userSchema.index({ 'trade_positions.transactions.timestamp': 1 });
 
 const User = mongoose.model('User', userSchema);
 
