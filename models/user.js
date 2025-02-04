@@ -8,15 +8,15 @@ const tradeTransactionSchema = new mongoose.Schema({
         required: true
     },
     amount: {
-        type: Number,
+        type: String,
         required: true
     },
     price_per_token: {
-        type: Number,
+        type: String,
         required: true
     },
     total_value_usd: {
-        type: Number,
+        type: String,
         required: true
     },
     transaction_hash: {
