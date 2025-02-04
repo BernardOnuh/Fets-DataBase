@@ -193,23 +193,35 @@ exports.updateTradePosition = async (req, res) => {
             wallet_address
         } = req.body;
 
+        // Validate required fields
+        if (!mcap) {
+            return res.status(400).json({ 
+                error: 'Missing required field',
+                details: 'mcap is required'
+            });
+        }
+
         // Find user
         let user = await User.findOne({ telegram_id });
         if (!user) {
             user = new User({ telegram_id });
         }
 
-        // Create new transaction object first
+        // Ensure mcap is converted to string
+        const mcapString = mcap.toString();
+
+        // Create new transaction object
         const newTransaction = {
             action,
             amount,
-            mcap,  // Explicitly include mcap
+            mcap: mcapString,
             total_value_usd,
             transaction_hash,
             wallet_address,
             timestamp: new Date()
         };
 
+        // Log the transaction for debugging
         console.log('New transaction object:', newTransaction);
 
         // Find or create position
@@ -226,8 +238,8 @@ exports.updateTradePosition = async (req, res) => {
                 token_symbol,
                 token_name,
                 amount: "0",
-                average_mcap: mcap,
-                transactions: [newTransaction]  // Include the transaction here
+                average_mcap: mcapString,
+                transactions: [newTransaction]
             };
             user.trade_positions.push(newPosition);
             positionIndex = user.trade_positions.length - 1;
@@ -240,25 +252,16 @@ exports.updateTradePosition = async (req, res) => {
         let position = user.trade_positions[positionIndex];
         if (action === 'buy') {
             position.amount = (Number(position.amount) + Number(amount)).toString();
-            position.average_mcap = mcap;
+            position.average_mcap = mcapString;
         } else {
             position.amount = (Number(position.amount) - Number(amount)).toString();
         }
 
-        // Mark the position as modified
+        // Mark the position as modified to ensure Mongoose picks up the changes
         user.markModified('trade_positions');
 
-        // Save and handle errors
-        try {
-            await user.save();
-        } catch (saveError) {
-            console.error('Save error details:', {
-                name: saveError.name,
-                message: saveError.message,
-                errors: saveError.errors
-            });
-            throw saveError;
-        }
+        // Save with validation
+        await user.save({ validateBeforeSave: true });
 
         res.status(200).json({
             message: 'Trade position updated successfully',
@@ -269,7 +272,7 @@ exports.updateTradePosition = async (req, res) => {
         console.error('Error in updateTradePosition:', error);
         res.status(500).json({ 
             error: 'Failed to update trade position',
-            details: error.message
+            details: error.message || 'Unknown error occurred'
         });
     }
 };
