@@ -1,6 +1,5 @@
 const mongoose = require('mongoose');
 
-// Schema for trade transactions
 const tradeTransactionSchema = new mongoose.Schema({
     action: {
         type: String,
@@ -13,7 +12,8 @@ const tradeTransactionSchema = new mongoose.Schema({
     },
     mcap: {
         type: String,
-        required: true
+        required: true,
+        set: v => v.toString() // Ensure mcap is always stored as string
     },
     total_value_usd: {
         type: String,
@@ -31,6 +31,9 @@ const tradeTransactionSchema = new mongoose.Schema({
         type: Date,
         default: Date.now
     }
+}, { 
+    strict: true,
+    validateBeforeSave: true
 });
 
 // Schema for trade positions

@@ -187,79 +187,89 @@ exports.updateTradePosition = async (req, res) => {
             token_name,
             action,
             amount,
-            mcap,                // Changed from price_per_token
+            mcap,
             total_value_usd,
             transaction_hash,
             wallet_address
         } = req.body;
 
-        // Validate required fields
-        if (!wallet_address) {
-            return res.status(400).json({ error: 'Wallet address is required' });
-        }
+        console.log('Received trade data:', {
+            token_address,
+            chain,
+            action,
+            amount,
+            mcap,
+            total_value_usd,
+            wallet_address
+        });
 
-        if (!amount || !mcap || !total_value_usd) {  // Changed validation
-            return res.status(400).json({ error: 'Amount, market cap, and total value are required' });
-        }
-
-        // Find user
+        // Find or create user
         let user = await User.findOne({ telegram_id });
         if (!user) {
             user = new User({ telegram_id });
         }
 
-        // Find or create position
+        // Find existing position or create new one
         let position = user.trade_positions.find(p => 
             p.token_address.toLowerCase() === token_address.toLowerCase() && 
             p.chain === chain
         );
 
         if (!position) {
-            position = {
+            // Create new position
+            user.trade_positions.push({
                 token_address,
                 chain,
                 token_symbol,
                 token_name,
                 amount: "0",
+                average_mcap: mcap,
                 transactions: []
-            };
-            user.trade_positions.push(position);
+            });
+            position = user.trade_positions[user.trade_positions.length - 1];
         }
 
-        // Store numbers as strings to preserve precision
-        const parsedAmount = amount.toString();
-        const parsedMcap = mcap.toString();
-        const parsedTotal = total_value_usd.toString();
-
-        // Add transaction
-        position.transactions.push({
+        // Create new transaction
+        const transaction = {
             action,
-            amount: parsedAmount,
-            mcap: parsedMcap,           // Changed from price_per_token
-            total_value_usd: parsedTotal,
+            amount,
+            mcap: mcap.toString(), // Ensure mcap is converted to string
+            total_value_usd,
             transaction_hash,
-            wallet_address
-        });
+            wallet_address,
+            timestamp: new Date()
+        };
 
-        // Update position totals
+        console.log('Created transaction:', transaction);
+
+        // Add transaction to position
+        position.transactions.push(transaction);
+
+        // Update position amounts
         if (action === 'buy') {
-            position.amount = (Number(position.amount) + Number(parsedAmount)).toString();
-            position.average_mcap = parsedMcap;  // Track market cap at buy
+            const newAmount = (Number(position.amount) + Number(amount)).toString();
+            position.amount = newAmount;
+            position.average_mcap = mcap.toString();
         } else {
-            position.amount = (Number(position.amount) - Number(parsedAmount)).toString();
+            const newAmount = (Number(position.amount) - Number(amount)).toString();
+            position.amount = newAmount;
         }
 
-        await user.save();
+        // Save changes
+        const savedUser = await user.save();
+        console.log('Saved position:', savedUser.trade_positions[savedUser.trade_positions.length - 1]);
 
         res.status(200).json({
             message: 'Trade position updated successfully',
-            position
+            position: savedUser.trade_positions[savedUser.trade_positions.length - 1]
         });
+
     } catch (error) {
         console.error('Error in updateTradePosition:', error);
         res.status(500).json({ 
             error: 'Failed to update trade position',
-            details: error.message 
+            details: error.message,
+            stack: error.stack
         });
     }
 };
