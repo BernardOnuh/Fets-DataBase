@@ -7,15 +7,15 @@ const tradeTransactionSchema = new mongoose.Schema({
         required: true
     },
     amount: {
-        type: String,  // Using String to handle precise numbers
+        type: String,
         required: true
     },
-    mcap: {           // Changed from price_per_token
-        type: String,  // Using String to handle large numbers
+    mcap: {                  // Changed from price_per_token
+        type: String,
         required: true
     },
     total_value_usd: {
-        type: String,  // Using String to handle precise numbers
+        type: String,
         required: true
     },
     transaction_hash: {
@@ -35,11 +35,13 @@ const tradeTransactionSchema = new mongoose.Schema({
 const tradePositionSchema = new mongoose.Schema({
     token_address: {
         type: String,
-        required: true
+        required: true,
+        lowercase: true
     },
     chain: {
         type: String,
-        required: true
+        required: true,
+        uppercase: true
     },
     token_symbol: String,
     token_name: String,
@@ -47,23 +49,12 @@ const tradePositionSchema = new mongoose.Schema({
         type: String,
         default: "0"
     },
-    average_mcap: {    // Changed from average_price
+    average_mcap: {         // Changed from average_buy_price
         type: String,
         default: "0"
     },
-    total_cost: {
-        type: String,
-        default: "0"
-    },
-    final_pl: String,
-    opened_at: {
-        type: Date,
-        default: Date.now
-    },
-    closed_at: Date,
     transactions: [tradeTransactionSchema]
-});
-
+}, { timestamps: true });
 // Schema for EVM wallet
 const evmWalletSchema = new mongoose.Schema({
     name: {
