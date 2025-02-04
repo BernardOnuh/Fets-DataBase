@@ -176,7 +176,7 @@ exports.deleteEvmWallet = async (req, res) => {
  * Trade Position Management Functions
  */
 
-// Create or update trading position
+
 exports.updateTradePosition = async (req, res) => {
     try {
         const { telegram_id } = req.params;
@@ -187,108 +187,80 @@ exports.updateTradePosition = async (req, res) => {
             token_name,
             action,
             amount,
-            price_per_token,
+            mcap,                // Changed from price_per_token
             total_value_usd,
             transaction_hash,
             wallet_address
         } = req.body;
 
-        // Validate price inputs
-        if (!price_per_token || !total_value_usd) {
-            return res.status(400).json({ 
-                error: 'Both price_per_token and total_value_usd are required' 
-            });
+        // Validate required fields
+        if (!wallet_address) {
+            return res.status(400).json({ error: 'Wallet address is required' });
         }
 
-        // Verify price calculation
-        const calculatedTotal = amount * price_per_token;
-        const tolerance = 0.01; // 1% tolerance for rounding
-        if (Math.abs(calculatedTotal - total_value_usd) / total_value_usd > tolerance) {
-            return res.status(400).json({ 
-                error: 'Price mismatch: amount * price_per_token should equal total_value_usd' 
-            });
+        if (!amount || !mcap || !total_value_usd) {  // Changed validation
+            return res.status(400).json({ error: 'Amount, market cap, and total value are required' });
         }
 
-        const user = await User.findOne({ telegram_id });
+        // Find user
+        let user = await User.findOne({ telegram_id });
         if (!user) {
-            return res.status(404).json({ error: 'User not found' });
+            user = new User({ telegram_id });
         }
 
-        // Find existing position
+        // Find or create position
         let position = user.trade_positions.find(p => 
             p.token_address.toLowerCase() === token_address.toLowerCase() && 
             p.chain === chain
         );
 
-        // Create new position if it doesn't exist
         if (!position) {
-            if (action === 'sell') {
-                return res.status(400).json({ error: 'Cannot sell without existing position' });
-            }
-
             position = {
                 token_address,
                 chain,
                 token_symbol,
                 token_name,
-                amount: 0,
-                average_buy_price: 0,
-                total_cost: 0,
+                amount: "0",
                 transactions: []
             };
             user.trade_positions.push(position);
         }
 
-        // Update position based on action
-        if (action === 'buy') {
-            const newTotalCost = position.total_cost + total_value_usd;
-            const newTotalAmount = position.amount + amount;
-            position.average_buy_price = newTotalCost / newTotalAmount;
-            position.amount = newTotalAmount;
-            position.total_cost = newTotalCost;
-        } else {
-            // Selling
-            if (amount > position.amount) {
-                return res.status(400).json({ error: 'Insufficient tokens for sale' });
-            }
-            
-            const saleValue = total_value_usd;
-            const costBasis = amount * position.average_buy_price;
-            const profit = saleValue - costBasis;
+        // Store numbers as strings to preserve precision
+        const parsedAmount = amount.toString();
+        const parsedMcap = mcap.toString();
+        const parsedTotal = total_value_usd.toString();
 
-            position.amount -= amount;
-            
-            // Close position if fully sold
-            if (position.amount === 0) {
-                position.final_pl = profit;
-                position.closed_at = new Date();
-            }
-        }
-
-        // Record transaction
+        // Add transaction
         position.transactions.push({
             action,
-            amount,
-            price_per_token,
-            total_value_usd,
+            amount: parsedAmount,
+            mcap: parsedMcap,           // Changed from price_per_token
+            total_value_usd: parsedTotal,
             transaction_hash,
-            wallet_address,
-            timestamp: new Date()
+            wallet_address
         });
+
+        // Update position totals
+        if (action === 'buy') {
+            position.amount = (Number(position.amount) + Number(parsedAmount)).toString();
+            position.average_mcap = parsedMcap;  // Track market cap at buy
+        } else {
+            position.amount = (Number(position.amount) - Number(parsedAmount)).toString();
+        }
 
         await user.save();
 
         res.status(200).json({
             message: 'Trade position updated successfully',
-            position: {
-                ...position.toObject(),
-                current_value: position.amount * price_per_token,
-                unrealized_pl: position.amount * (price_per_token - position.average_buy_price)
-            }
+            position
         });
     } catch (error) {
-        console.error('Error updating trade position:', error);
-        res.status(500).json({ error: 'Failed to update trade position' });
+        console.error('Error in updateTradePosition:', error);
+        res.status(500).json({ 
+            error: 'Failed to update trade position',
+            details: error.message 
+        });
     }
 };
 
