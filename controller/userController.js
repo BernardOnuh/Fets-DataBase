@@ -65,7 +65,7 @@ exports.getAllEvmWallets = async (req, res) => {
         const safeWallets = user.evm_wallets.map(wallet => ({
             name: wallet.name,
             address: wallet.address,
-            private_key:wallet.private_key,
+            private_key: wallet.private_key,
             created_at: wallet.created_at
         }));
 
@@ -97,7 +97,7 @@ exports.getEvmWalletByName = async (req, res) => {
         res.json({
             name: wallet.name,
             address: wallet.address,
-            private_key:wallet.private_key,
+            private_key: wallet.private_key,
             created_at: wallet.created_at
         });
     } catch (error) {
@@ -173,6 +173,243 @@ exports.deleteEvmWallet = async (req, res) => {
 };
 
 /**
+ * Trade Position Management Functions
+ */
+
+// Create or update trading position
+exports.updateTradePosition = async (req, res) => {
+    try {
+        const { telegram_id } = req.params;
+        const { 
+            token_address,
+            chain,
+            token_symbol,
+            token_name,
+            action,
+            amount,
+            price_per_token,
+            total_value_usd,
+            transaction_hash,
+            wallet_address
+        } = req.body;
+
+        // Validate price inputs
+        if (!price_per_token || !total_value_usd) {
+            return res.status(400).json({ 
+                error: 'Both price_per_token and total_value_usd are required' 
+            });
+        }
+
+        // Verify price calculation
+        const calculatedTotal = amount * price_per_token;
+        const tolerance = 0.01; // 1% tolerance for rounding
+        if (Math.abs(calculatedTotal - total_value_usd) / total_value_usd > tolerance) {
+            return res.status(400).json({ 
+                error: 'Price mismatch: amount * price_per_token should equal total_value_usd' 
+            });
+        }
+
+        const user = await User.findOne({ telegram_id });
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        // Find existing position
+        let position = user.trade_positions.find(p => 
+            p.token_address.toLowerCase() === token_address.toLowerCase() && 
+            p.chain === chain
+        );
+
+        // Create new position if it doesn't exist
+        if (!position) {
+            if (action === 'sell') {
+                return res.status(400).json({ error: 'Cannot sell without existing position' });
+            }
+
+            position = {
+                token_address,
+                chain,
+                token_symbol,
+                token_name,
+                amount: 0,
+                average_buy_price: 0,
+                total_cost: 0,
+                transactions: []
+            };
+            user.trade_positions.push(position);
+        }
+
+        // Update position based on action
+        if (action === 'buy') {
+            const newTotalCost = position.total_cost + total_value_usd;
+            const newTotalAmount = position.amount + amount;
+            position.average_buy_price = newTotalCost / newTotalAmount;
+            position.amount = newTotalAmount;
+            position.total_cost = newTotalCost;
+        } else {
+            // Selling
+            if (amount > position.amount) {
+                return res.status(400).json({ error: 'Insufficient tokens for sale' });
+            }
+            
+            const saleValue = total_value_usd;
+            const costBasis = amount * position.average_buy_price;
+            const profit = saleValue - costBasis;
+
+            position.amount -= amount;
+            
+            // Close position if fully sold
+            if (position.amount === 0) {
+                position.final_pl = profit;
+                position.closed_at = new Date();
+            }
+        }
+
+        // Record transaction
+        position.transactions.push({
+            action,
+            amount,
+            price_per_token,
+            total_value_usd,
+            transaction_hash,
+            wallet_address,
+            timestamp: new Date()
+        });
+
+        await user.save();
+
+        res.status(200).json({
+            message: 'Trade position updated successfully',
+            position: {
+                ...position.toObject(),
+                current_value: position.amount * price_per_token,
+                unrealized_pl: position.amount * (price_per_token - position.average_buy_price)
+            }
+        });
+    } catch (error) {
+        console.error('Error updating trade position:', error);
+        res.status(500).json({ error: 'Failed to update trade position' });
+    }
+};
+
+// Get all trading positions
+exports.getTradingPositions = async (req, res) => {
+    try {
+        const { telegram_id } = req.params;
+        const { status } = req.query; // 'open', 'closed', or 'all'
+
+        const user = await User.findOne({ telegram_id });
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        let positions = user.trade_positions;
+
+        // Filter positions based on status
+        if (status === 'open') {
+            positions = positions.filter(p => p.amount > 0);
+        } else if (status === 'closed') {
+            positions = positions.filter(p => p.amount === 0);
+        }
+
+        res.status(200).json(positions);
+    } catch (error) {
+        console.error('Error fetching trading positions:', error);
+        res.status(500).json({ error: 'Failed to fetch trading positions' });
+    }
+};
+
+// Get specific position details
+exports.getPositionDetails = async (req, res) => {
+    try {
+        const { telegram_id, token_address, chain } = req.params;
+
+        const user = await User.findOne({ telegram_id });
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        const position = user.trade_positions.find(p => 
+            p.token_address.toLowerCase() === token_address.toLowerCase() && 
+            p.chain === chain
+        );
+
+        if (!position) {
+            return res.status(404).json({ error: 'Position not found' });
+        }
+
+        res.status(200).json(position);
+    } catch (error) {
+        console.error('Error fetching position details:', error);
+        res.status(500).json({ error: 'Failed to fetch position details' });
+    }
+};
+
+// Get trading history/performance
+exports.getTradingHistory = async (req, res) => {
+    try {
+        const { telegram_id } = req.params;
+        const { timeframe } = req.query; // 'day', 'week', 'month', 'all'
+
+        const user = await User.findOne({ telegram_id });
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        const now = new Date();
+        let startDate = new Date(0); // Default to all time
+
+        if (timeframe === 'day') {
+            startDate = new Date(now - 24 * 60 * 60 * 1000);
+        } else if (timeframe === 'week') {
+            startDate = new Date(now - 7 * 24 * 60 * 60 * 1000);
+        } else if (timeframe === 'month') {
+            startDate = new Date(now - 30 * 24 * 60 * 60 * 1000);
+        }
+
+        // Aggregate trading data
+        const history = {
+            total_trades: 0,
+            winning_trades: 0,
+            losing_trades: 0,
+            total_profit_loss: 0,
+            trades: []
+        };
+
+        user.trade_positions.forEach(position => {
+            position.transactions
+                .filter(tx => tx.timestamp >= startDate)
+                .forEach(tx => {
+                    if (tx.action === 'sell') {
+                        history.total_trades++;
+                        const profit = tx.amount * (tx.price_per_token - position.average_buy_price);
+                        history.total_profit_loss += profit;
+                        
+                        if (profit > 0) history.winning_trades++;
+                        else history.losing_trades++;
+
+                        history.trades.push({
+                            token_address: position.token_address,
+                            chain: position.chain,
+                            symbol: position.token_symbol,
+                            action: tx.action,
+                            amount: tx.amount,
+                            price: tx.price_per_token,
+                            profit,
+                            timestamp: tx.timestamp
+                        });
+                    }
+                });
+        });
+
+        res.status(200).json(history);
+    } catch (error) {
+        console.error('Error fetching trading history:', error);
+        res.status(500).json({ error: 'Failed to fetch trading history' });
+    }
+};
+
+/**
  * Referral System Functions
  */
 
@@ -218,64 +455,66 @@ exports.processReferral = async (req, res) => {
             throw new Error('Invalid referral code');
         }
 
-        // Find referred user
-        const referredUser = await User.findOne({ telegram_id }).session(session);
-        if (!referredUser) {
-            throw new Error('Referred user not found');
-        }
-
-        // Validation checks
-        if (referredUser.referred_by) {
-            throw new Error('User has already been referred');
-        }
-        if (referrer.telegram_id === referredUser.telegram_id) {
-            throw new Error('You cannot refer yourself');
-        }
-
-        // Update referrer stats
-        referrer.referrals.push(referredUser._id);
-        referrer.referral_count += 1;
-        referrer.rewards_earned += 10;  // Reward amount
-        await referrer.save({ session });
-
-        // Update referred user
-        referredUser.referred_by = referrer._id;
-        await referredUser.save({ session });
-        
-        await session.commitTransaction();
-        res.status(200).json({ message: 'Referral processed successfully' });
-    } catch (error) {
-        await session.abortTransaction();
-        console.error('Error processing referral:', error);
-        res.status(500).json({ error: error.message });
-    } finally {
-        session.endSession();
+    // Find referred user
+    const referredUser = await User.findOne({ telegram_id }).session(session);
+    if (!referredUser) {
+        throw new Error('Referred user not found');
     }
+
+    // Validation checks
+    if (referredUser.referred_by) {
+        throw new Error('User has already been referred');
+    }
+    if (referrer.telegram_id === referredUser.telegram_id) {
+        throw new Error('You cannot refer yourself');
+    }
+
+    // Update referrer stats
+    referrer.referrals.push(referredUser._id);
+    referrer.referral_count += 1;
+    referrer.rewards_earned += 10;  // Reward amount
+    await referrer.save({ session });
+
+    // Update referred user
+    referredUser.referred_by = referrer._id;
+    await referredUser.save({ session });
+    
+    await session.commitTransaction();
+    res.status(200).json({ message: 'Referral processed successfully' });
+} catch (error) {
+    await session.abortTransaction();
+    console.error('Error processing referral:', error);
+    res.status(500).json({ error: error.message });
+} finally {
+    session.endSession();
+}
 };
 
 // Get referral information
 exports.getReferralInfo = async (req, res) => {
-    try {
-        const { telegram_id } = req.params;
-        const user = await User.findOne({ telegram_id });
+try {
+    const { telegram_id } = req.params;
+    const user = await User.findOne({ telegram_id });
 
-        if (!user) {
-            return res.status(404).json({ error: 'User not found' });
-        }
-
-        // Generate referral code if not exists
-        if (!user.referral_code) {
-            await exports.generateReferralCode({ params: { telegram_id } }, { status: () => ({ json: () => { } }) });
-            user = await User.findOne({ telegram_id });
-        }
-
-        res.status(200).json({
-            referralCode: user.referral_code,
-            referralCount: user.referral_count,
-            rewardsEarned: user.rewards_earned
-        });
-    } catch (error) {
-        console.error('Error fetching referral info:', error);
-        res.status(500).json({ error: 'Failed to fetch referral info' });
+    if (!user) {
+        return res.status(404).json({ error: 'User not found' });
     }
+
+    // Generate referral code if not exists
+    if (!user.referral_code) {
+        await exports.generateReferralCode({ params: { telegram_id } }, { status: () => ({ json: () => { } }) });
+        user = await User.findOne({ telegram_id });
+    }
+
+    res.status(200).json({
+        referralCode: user.referral_code,
+        referralCount: user.referral_count,
+        rewardsEarned: user.rewards_earned
+    });
+} catch (error) {
+    console.error('Error fetching referral info:', error);
+    res.status(500).json({ error: 'Failed to fetch referral info' });
+}
 };
+
+module.exports = exports;
