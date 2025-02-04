@@ -1,6 +1,5 @@
 const mongoose = require('mongoose');
 
-// Schema for transactions within a trade position
 const tradeTransactionSchema = new mongoose.Schema({
     action: {
         type: String,
@@ -8,15 +7,15 @@ const tradeTransactionSchema = new mongoose.Schema({
         required: true
     },
     amount: {
-        type: String,
+        type: String,  // Using String to handle precise numbers
         required: true
     },
-    price_per_token: {
-        type: String,
+    mcap: {           // Changed from price_per_token
+        type: String,  // Using String to handle large numbers
         required: true
     },
     total_value_usd: {
-        type: String,
+        type: String,  // Using String to handle precise numbers
         required: true
     },
     transaction_hash: {
@@ -33,7 +32,6 @@ const tradeTransactionSchema = new mongoose.Schema({
     }
 });
 
-// Schema for trade positions
 const tradePositionSchema = new mongoose.Schema({
     token_address: {
         type: String,
@@ -46,18 +44,18 @@ const tradePositionSchema = new mongoose.Schema({
     token_symbol: String,
     token_name: String,
     amount: {
-        type: Number,
-        default: 0
+        type: String,
+        default: "0"
     },
-    average_buy_price: {
-        type: Number,
-        default: 0
+    average_mcap: {    // Changed from average_price
+        type: String,
+        default: "0"
     },
     total_cost: {
-        type: Number,
-        default: 0
+        type: String,
+        default: "0"
     },
-    final_pl: Number,
+    final_pl: String,
     opened_at: {
         type: Date,
         default: Date.now
