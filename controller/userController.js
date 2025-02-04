@@ -193,83 +193,83 @@ exports.updateTradePosition = async (req, res) => {
             wallet_address
         } = req.body;
 
-        console.log('Received trade data:', {
-            token_address,
-            chain,
-            action,
-            amount,
-            mcap,
-            total_value_usd,
-            wallet_address
-        });
-
-        // Find or create user
+        // Find user
         let user = await User.findOne({ telegram_id });
         if (!user) {
             user = new User({ telegram_id });
         }
 
-        // Find existing position or create new one
-        let position = user.trade_positions.find(p => 
-            p.token_address.toLowerCase() === token_address.toLowerCase() && 
-            p.chain === chain
-        );
-
-        if (!position) {
-            // Create new position
-            user.trade_positions.push({
-                token_address,
-                chain,
-                token_symbol,
-                token_name,
-                amount: "0",
-                average_mcap: mcap,
-                transactions: []
-            });
-            position = user.trade_positions[user.trade_positions.length - 1];
-        }
-
-        // Create new transaction
-        const transaction = {
+        // Create new transaction object first
+        const newTransaction = {
             action,
             amount,
-            mcap: mcap.toString(), // Ensure mcap is converted to string
+            mcap,  // Explicitly include mcap
             total_value_usd,
             transaction_hash,
             wallet_address,
             timestamp: new Date()
         };
 
-        console.log('Created transaction:', transaction);
+        console.log('New transaction object:', newTransaction);
 
-        // Add transaction to position
-        position.transactions.push(transaction);
+        // Find or create position
+        let positionIndex = user.trade_positions.findIndex(p => 
+            p.token_address.toLowerCase() === token_address.toLowerCase() && 
+            p.chain === chain
+        );
 
-        // Update position amounts
-        if (action === 'buy') {
-            const newAmount = (Number(position.amount) + Number(amount)).toString();
-            position.amount = newAmount;
-            position.average_mcap = mcap.toString();
+        if (positionIndex === -1) {
+            // Create new position
+            const newPosition = {
+                token_address,
+                chain,
+                token_symbol,
+                token_name,
+                amount: "0",
+                average_mcap: mcap,
+                transactions: [newTransaction]  // Include the transaction here
+            };
+            user.trade_positions.push(newPosition);
+            positionIndex = user.trade_positions.length - 1;
         } else {
-            const newAmount = (Number(position.amount) - Number(amount)).toString();
-            position.amount = newAmount;
+            // Add transaction to existing position
+            user.trade_positions[positionIndex].transactions.push(newTransaction);
         }
 
-        // Save changes
-        const savedUser = await user.save();
-        console.log('Saved position:', savedUser.trade_positions[savedUser.trade_positions.length - 1]);
+        // Update position amounts
+        let position = user.trade_positions[positionIndex];
+        if (action === 'buy') {
+            position.amount = (Number(position.amount) + Number(amount)).toString();
+            position.average_mcap = mcap;
+        } else {
+            position.amount = (Number(position.amount) - Number(amount)).toString();
+        }
+
+        // Mark the position as modified
+        user.markModified('trade_positions');
+
+        // Save and handle errors
+        try {
+            await user.save();
+        } catch (saveError) {
+            console.error('Save error details:', {
+                name: saveError.name,
+                message: saveError.message,
+                errors: saveError.errors
+            });
+            throw saveError;
+        }
 
         res.status(200).json({
             message: 'Trade position updated successfully',
-            position: savedUser.trade_positions[savedUser.trade_positions.length - 1]
+            position: user.trade_positions[positionIndex]
         });
 
     } catch (error) {
         console.error('Error in updateTradePosition:', error);
         res.status(500).json({ 
             error: 'Failed to update trade position',
-            details: error.message,
-            stack: error.stack
+            details: error.message
         });
     }
 };
