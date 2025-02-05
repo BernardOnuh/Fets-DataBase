@@ -9,6 +9,10 @@ router.get('/wallet/evm/:telegram_id/:wallet_name', walletController.getEvmWalle
 router.put('/wallet/evm/:telegram_id/:wallet_name', walletController.updateEvmWallet);  // Update wallet
 router.delete('/wallet/evm/:telegram_id/:wallet_name', walletController.deleteEvmWallet);  // Delete wallet
 
+// Wallet Settings Routes
+router.get('/wallet/evm/settings/:telegram_id/:wallet_name', walletController.getWalletSettings);  // Get wallet settings
+router.put('/wallet/evm/settings/:telegram_id/:wallet_name', walletController.updateWalletSettings);  // Update wallet settings
+
 // Trade Position Routes
 router.post('/trade/position/:telegram_id', walletController.updateTradePosition);  // Create/Update trade position
 router.get('/trade/positions/:telegram_id', walletController.getTradingPositions);  // Get all positions

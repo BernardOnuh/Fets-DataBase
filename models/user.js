@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 
+// Transaction schema remains the same
 const tradeTransactionSchema = new mongoose.Schema({
     action: {
         type: String,
@@ -13,7 +14,7 @@ const tradeTransactionSchema = new mongoose.Schema({
     mcap: {
         type: String,
         required: true,
-        set: v => v.toString() // Ensure mcap is always stored as string
+        set: v => v.toString()
     },
     total_value_usd: {
         type: String,
@@ -31,12 +32,12 @@ const tradeTransactionSchema = new mongoose.Schema({
         type: Date,
         default: Date.now
     }
-}, { 
+}, {
     strict: true,
     validateBeforeSave: true
 });
 
-// Schema for trade positions
+// Trade position schema remains the same
 const tradePositionSchema = new mongoose.Schema({
     token_address: {
         type: String,
@@ -67,7 +68,7 @@ const tradePositionSchema = new mongoose.Schema({
     transactions: [tradeTransactionSchema]
 }, { timestamps: true });
 
-// Schema for EVM wallet
+// Updated EVM wallet schema with settings
 const evmWalletSchema = new mongoose.Schema({
     name: {
         type: String,
@@ -85,13 +86,29 @@ const evmWalletSchema = new mongoose.Schema({
         type: String,
         required: true
     },
+    settings: {
+        slippage: {
+            type: Number,
+            default: 10,
+            min: 0.1,
+            max: 100,
+            required: true
+        },
+        gas_limit: {
+            type: Number,
+            default: 300000,
+            min: 21000,
+            max: 1000000,
+            required: true
+        }
+    },
     created_at: {
         type: Date,
         default: Date.now
     }
 });
 
-// User schema
+// User schema with all components
 const userSchema = new mongoose.Schema({
     telegram_id: {
         type: String,
@@ -101,7 +118,7 @@ const userSchema = new mongoose.Schema({
     evm_wallets: [evmWalletSchema],
     trade_positions: [tradePositionSchema],
     
-    // Fields for referral system
+    // Referral system fields
     referral_code: {
         type: String,
         unique: true,
@@ -124,7 +141,7 @@ const userSchema = new mongoose.Schema({
         default: 0
     },
     
-    // Settings
+    // Global user settings
     settings: {
         language: {
             type: String,
@@ -139,11 +156,21 @@ const userSchema = new mongoose.Schema({
                 type: Boolean,
                 default: true
             }
+        },
+        default_wallet_settings: {  // Optional global defaults for new wallets
+            slippage: {
+                type: Number,
+                default: 10
+            },
+            gas_limit: {
+                type: Number,
+                default: 300000
+            }
         }
     }
 }, { timestamps: true });
 
-// Indexes for faster queries
+// Maintain existing indexes
 userSchema.index({ referral_code: 1 }, { unique: true, sparse: true });
 userSchema.index({ 'evm_wallets.name': 1, telegram_id: 1 }, { unique: true });
 userSchema.index({ 'trade_positions.token_address': 1, 'trade_positions.chain': 1 });
@@ -152,6 +179,10 @@ userSchema.index({ 'trade_positions.closed_at': 1 });
 userSchema.index({ 'trade_positions.transactions.transaction_hash': 1 });
 userSchema.index({ 'trade_positions.transactions.wallet_address': 1 });
 userSchema.index({ 'trade_positions.transactions.timestamp': 1 });
+
+// Add new index for wallet settings queries if needed
+userSchema.index({ 'evm_wallets.settings.slippage': 1 });
+userSchema.index({ 'evm_wallets.settings.gas_limit': 1 });
 
 const User = mongoose.model('User', userSchema);
 

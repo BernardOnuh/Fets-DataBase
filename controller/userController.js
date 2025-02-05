@@ -8,11 +8,30 @@ const User = require('../models/user');
 // Create a new EVM wallet
 exports.createEvmWallet = async (req, res) => {
     try {
-        const { telegram_id, name, address, private_key, seed_phrase } = req.body;
+        const { 
+            telegram_id, 
+            name, 
+            address, 
+            private_key, 
+            seed_phrase,
+            settings = {
+                slippage: 10,        // Default 10% slippage
+                gas_limit: 300000    // Default gas limit
+            }
+        } = req.body;
 
         // Validate required fields
         if (!name || !address || !private_key || !seed_phrase) {
             return res.status(400).json({ error: 'Missing required wallet information' });
+        }
+
+        // Validate settings
+        if (settings.slippage && (settings.slippage < 0.1 || settings.slippage > 100)) {
+            return res.status(400).json({ error: 'Slippage must be between 0.1 and 100 percent' });
+        }
+
+        if (settings.gas_limit && (settings.gas_limit < 21000 || settings.gas_limit > 1000000)) {
+            return res.status(400).json({ error: 'Gas limit must be between 21000 and 1000000' });
         }
 
         let user = await User.findOne({ telegram_id });
@@ -27,12 +46,16 @@ exports.createEvmWallet = async (req, res) => {
             return res.status(400).json({ error: 'Wallet with this name already exists' });
         }
 
-        // Add new wallet
+        // Add new wallet with settings
         user.evm_wallets.push({
             name,
             address,
             private_key,
-            seed_phrase
+            seed_phrase,
+            settings: {
+                slippage: settings.slippage || 10,
+                gas_limit: settings.gas_limit || 300000
+            }
         });
 
         await user.save();
@@ -41,7 +64,11 @@ exports.createEvmWallet = async (req, res) => {
             message: 'EVM wallet created successfully',
             wallet: {
                 name,
-                address
+                address,
+                settings: {
+                    slippage: settings.slippage || 10,
+                    gas_limit: settings.gas_limit || 300000
+                }
             }
         });
     } catch (error) {
@@ -49,6 +76,87 @@ exports.createEvmWallet = async (req, res) => {
         res.status(500).json({ error: 'Failed to create EVM wallet' });
     }
 };
+
+exports.updateWalletSettings = async (req, res) => {
+    try {
+        const { telegram_id, wallet_name } = req.params;
+        const { settings } = req.body;
+
+        if (!settings) {
+            return res.status(400).json({ error: 'Settings object is required' });
+        }
+
+        const user = await User.findOne({ telegram_id });
+
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        const walletIndex = user.evm_wallets.findIndex(w => w.name === wallet_name);
+
+        if (walletIndex === -1) {
+            return res.status(404).json({ error: 'Wallet not found' });
+        }
+
+        // Validate and update slippage
+        if (settings.slippage !== undefined) {
+            if (settings.slippage < 0.1 || settings.slippage > 100) {
+                return res.status(400).json({ error: 'Slippage must be between 0.1 and 100 percent' });
+            }
+            user.evm_wallets[walletIndex].settings.slippage = settings.slippage;
+        }
+
+        // Validate and update gas limit
+        if (settings.gas_limit !== undefined) {
+            if (settings.gas_limit < 21000 || settings.gas_limit > 1000000) {
+                return res.status(400).json({ error: 'Gas limit must be between 21000 and 1000000' });
+            }
+            user.evm_wallets[walletIndex].settings.gas_limit = settings.gas_limit;
+        }
+
+        // Mark settings as modified for Mongoose
+        user.markModified('evm_wallets');
+        await user.save();
+
+        res.status(200).json({
+            message: 'Wallet settings updated successfully',
+            settings: user.evm_wallets[walletIndex].settings
+        });
+    } catch (error) {
+        console.error('Error updating wallet settings:', error);
+        res.status(500).json({ error: 'Failed to update wallet settings' });
+    }
+};
+
+
+exports.getWalletSettings = async (req, res) => {
+    try {
+        const { telegram_id, wallet_name } = req.params;
+
+        const user = await User.findOne({ telegram_id });
+
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        const wallet = user.evm_wallets.find(w => w.name === wallet_name);
+
+        if (!wallet) {
+            return res.status(404).json({ error: 'Wallet not found' });
+        }
+
+        res.status(200).json({
+            settings: wallet.settings || {
+                slippage: 10,
+                gas_limit: 300000
+            }
+        });
+    } catch (error) {
+        console.error('Error fetching wallet settings:', error);
+        res.status(500).json({ error: 'Failed to fetch wallet settings' });
+    }
+};
+
 
 // Get all EVM wallets for a user
 exports.getAllEvmWallets = async (req, res) => {
