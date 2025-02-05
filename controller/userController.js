@@ -161,22 +161,26 @@ exports.getWalletSettings = async (req, res) => {
 // Get all EVM wallets for a user
 exports.getAllEvmWallets = async (req, res) => {
     const { telegram_id } = req.params;
-
+    
     try {
         const user = await User.findOne({ telegram_id });
-
+        
         if (!user) {
             return res.status(404).json({ error: 'User not found' });
         }
-
+        
         // Return only public wallet information
         const safeWallets = user.evm_wallets.map(wallet => ({
             name: wallet.name,
             address: wallet.address,
             private_key: wallet.private_key,
+            settings: {
+                slippage: wallet.settings.slippage || 10,
+                gas_limit: wallet.settings.gas_limit || 300000
+            },
             created_at: wallet.created_at
         }));
-
+        
         res.json(safeWallets);
     } catch (error) {
         console.error('Error fetching EVM wallets:', error);
@@ -187,25 +191,29 @@ exports.getAllEvmWallets = async (req, res) => {
 // Get specific EVM wallet by name
 exports.getEvmWalletByName = async (req, res) => {
     const { telegram_id, wallet_name } = req.params;
-
+    
     try {
         const user = await User.findOne({ telegram_id });
-
+        
         if (!user) {
             return res.status(404).json({ error: 'User not found' });
         }
-
+        
         const wallet = user.evm_wallets.find(w => w.name === wallet_name);
-
+        
         if (!wallet) {
             return res.status(404).json({ error: 'Wallet not found' });
         }
-
-        // Return only public wallet information
+        
+        // Return public wallet information along with settings
         res.json({
             name: wallet.name,
             address: wallet.address,
             private_key: wallet.private_key,
+            settings: {
+                slippage: wallet.settings.slippage || 10,
+                gas_limit: wallet.settings.gas_limit || 300000
+            },
             created_at: wallet.created_at
         });
     } catch (error) {
