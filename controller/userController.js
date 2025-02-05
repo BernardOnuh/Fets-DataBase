@@ -284,8 +284,10 @@ exports.deleteEvmWallet = async (req, res) => {
  * Trade Position Management Functions
  */
 
-
 exports.updateTradePosition = async (req, res) => {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
     try {
         const { telegram_id } = req.params;
         const { 
@@ -295,22 +297,49 @@ exports.updateTradePosition = async (req, res) => {
             token_name,
             action,
             amount,
+            price_per_token,
             mcap,
             total_value_usd,
             transaction_hash,
             wallet_address
         } = req.body;
 
-        // Validate required fields
-        if (!mcap) {
-            return res.status(400).json({ 
-                error: 'Missing required field',
-                details: 'mcap is required'
-            });
+        // Comprehensive Validation
+        const requiredFields = [
+            'token_address', 'chain', 'action', 
+            'amount', 'price_per_token', 'mcap'
+        ];
+        
+        for (let field of requiredFields) {
+            if (!req.body[field]) {
+                await session.abortTransaction();
+                session.endSession();
+                return res.status(400).json({ 
+                    error: `Missing required field: ${field}`,
+                    details: 'All critical trade information must be provided'
+                });
+            }
         }
 
-        // Find user
-        let user = await User.findOne({ telegram_id });
+        // Numeric Validations
+        const numericValidation = {
+            amount: Number(amount),
+            price_per_token: Number(price_per_token),
+            mcap: Number(mcap)
+        };
+
+        for (let [field, value] of Object.entries(numericValidation)) {
+            if (isNaN(value) || value <= 0) {
+                await session.abortTransaction();
+                session.endSession();
+                return res.status(400).json({ 
+                    error: `Invalid ${field}. Must be a positive number.`
+                });
+            }
+        }
+
+        // Find or Create User
+        let user = await User.findOne({ telegram_id }).session(session);
         if (!user) {
             user = new User({ telegram_id });
         }
@@ -318,10 +347,11 @@ exports.updateTradePosition = async (req, res) => {
         // Ensure mcap is converted to string
         const mcapString = mcap.toString();
 
-        // Create new transaction object
+        // Create Comprehensive Transaction Object
         const newTransaction = {
             action,
-            amount,
+            amount: numericValidation.amount,
+            price_per_token: numericValidation.price_per_token,
             mcap: mcapString,
             total_value_usd,
             transaction_hash,
@@ -329,47 +359,65 @@ exports.updateTradePosition = async (req, res) => {
             timestamp: new Date()
         };
 
-        // Log the transaction for debugging
-        console.log('New transaction object:', newTransaction);
-
-        // Find or create position
+        // Find or Create Position
         let positionIndex = user.trade_positions.findIndex(p => 
             p.token_address.toLowerCase() === token_address.toLowerCase() && 
             p.chain === chain
         );
 
         if (positionIndex === -1) {
-            // Create new position
+            // Create New Position
             const newPosition = {
                 token_address,
                 chain,
                 token_symbol,
                 token_name,
                 amount: "0",
+                average_buy_price: action === 'buy' ? price_per_token : "0",
                 average_mcap: mcapString,
                 transactions: [newTransaction]
             };
             user.trade_positions.push(newPosition);
             positionIndex = user.trade_positions.length - 1;
         } else {
-            // Add transaction to existing position
+            // Add Transaction to Existing Position
             user.trade_positions[positionIndex].transactions.push(newTransaction);
         }
 
-        // Update position amounts
+        // Position Amount and Price Calculation
         let position = user.trade_positions[positionIndex];
+        
         if (action === 'buy') {
-            position.amount = (Number(position.amount) + Number(amount)).toString();
-            position.average_mcap = mcapString;
-        } else {
-            position.amount = (Number(position.amount) - Number(amount)).toString();
+            const currentAmount = Number(position.amount);
+            const newAmount = currentAmount + numericValidation.amount;
+            
+            // Weighted average buy price calculation
+            const currentTotalValue = currentAmount * Number(position.average_buy_price || 0);
+            const newTotalValue = currentTotalValue + (numericValidation.amount * price_per_token);
+            
+            position.average_buy_price = (newTotalValue / newAmount).toFixed(6);
+            position.amount = newAmount.toString();
+        } else if (action === 'sell') {
+            const currentAmount = Number(position.amount);
+            
+            if (currentAmount < numericValidation.amount) {
+                await session.abortTransaction();
+                session.endSession();
+                return res.status(400).json({ 
+                    error: 'Insufficient tokens to sell',
+                    availableAmount: currentAmount
+                });
+            }
+            
+            position.amount = (currentAmount - numericValidation.amount).toString();
         }
 
-        // Mark the position as modified to ensure Mongoose picks up the changes
+        // Mark position as modified
         user.markModified('trade_positions');
 
         // Save with validation
-        await user.save({ validateBeforeSave: true });
+        await user.save({ session, validateBeforeSave: true });
+        await session.commitTransaction();
 
         res.status(200).json({
             message: 'Trade position updated successfully',
@@ -377,72 +425,25 @@ exports.updateTradePosition = async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Error in updateTradePosition:', error);
+        await session.abortTransaction();
+        console.error('Comprehensive error in updateTradePosition:', {
+            message: error.message,
+            stack: error.stack,
+            requestBody: req.body
+        });
         res.status(500).json({ 
             error: 'Failed to update trade position',
-            details: error.message || 'Unknown error occurred'
+            details: error.message || 'Unexpected system error'
         });
+    } finally {
+        session.endSession();
     }
 };
 
-// Get all trading positions
-exports.getTradingPositions = async (req, res) => {
-    try {
-        const { telegram_id } = req.params;
-        const { status } = req.query; // 'open', 'closed', or 'all'
-
-        const user = await User.findOne({ telegram_id });
-        if (!user) {
-            return res.status(404).json({ error: 'User not found' });
-        }
-
-        let positions = user.trade_positions;
-
-        // Filter positions based on status
-        if (status === 'open') {
-            positions = positions.filter(p => p.amount > 0);
-        } else if (status === 'closed') {
-            positions = positions.filter(p => p.amount === 0);
-        }
-
-        res.status(200).json(positions);
-    } catch (error) {
-        console.error('Error fetching trading positions:', error);
-        res.status(500).json({ error: 'Failed to fetch trading positions' });
-    }
-};
-
-// Get specific position details
-exports.getPositionDetails = async (req, res) => {
-    try {
-        const { telegram_id, token_address, chain } = req.params;
-
-        const user = await User.findOne({ telegram_id });
-        if (!user) {
-            return res.status(404).json({ error: 'User not found' });
-        }
-
-        const position = user.trade_positions.find(p => 
-            p.token_address.toLowerCase() === token_address.toLowerCase() && 
-            p.chain === chain
-        );
-
-        if (!position) {
-            return res.status(404).json({ error: 'Position not found' });
-        }
-
-        res.status(200).json(position);
-    } catch (error) {
-        console.error('Error fetching position details:', error);
-        res.status(500).json({ error: 'Failed to fetch position details' });
-    }
-};
-
-// Get trading history/performance
 exports.getTradingHistory = async (req, res) => {
     try {
         const { telegram_id } = req.params;
-        const { timeframe } = req.query; // 'day', 'week', 'month', 'all'
+        const { timeframe = 'all', detailed = false } = req.query;
 
         const user = await User.findOne({ telegram_id });
         if (!user) {
@@ -450,55 +451,82 @@ exports.getTradingHistory = async (req, res) => {
         }
 
         const now = new Date();
-        let startDate = new Date(0); // Default to all time
+        let startDate = new Date(0);
 
-        if (timeframe === 'day') {
-            startDate = new Date(now - 24 * 60 * 60 * 1000);
-        } else if (timeframe === 'week') {
-            startDate = new Date(now - 7 * 24 * 60 * 60 * 1000);
-        } else if (timeframe === 'month') {
-            startDate = new Date(now - 30 * 24 * 60 * 60 * 1000);
+        const timeframeMap = {
+            'day': 24 * 60 * 60 * 1000,
+            'week': 7 * 24 * 60 * 60 * 1000,
+            'month': 30 * 24 * 60 * 60 * 1000
+        };
+
+        if (timeframeMap[timeframe]) {
+            startDate = new Date(now - timeframeMap[timeframe]);
         }
 
-        // Aggregate trading data
-        const history = {
+        const performanceMetrics = {
             total_trades: 0,
+            total_volume: 0,
+            realized_pnl: 0,
             winning_trades: 0,
             losing_trades: 0,
-            total_profit_loss: 0,
-            trades: []
+            win_rate: 0,
+            average_trade_size: 0,
+            trades: detailed ? [] : undefined
         };
 
         user.trade_positions.forEach(position => {
             position.transactions
-                .filter(tx => tx.timestamp >= startDate)
+                .filter(tx => tx.timestamp >= startDate && tx.action === 'sell')
                 .forEach(tx => {
-                    if (tx.action === 'sell') {
-                        history.total_trades++;
-                        const profit = tx.amount * (tx.price_per_token - position.average_buy_price);
-                        history.total_profit_loss += profit;
-                        
-                        if (profit > 0) history.winning_trades++;
-                        else history.losing_trades++;
+                    performanceMetrics.total_trades++;
+                    performanceMetrics.total_volume += tx.total_value_usd || 0;
 
-                        history.trades.push({
-                            token_address: position.token_address,
-                            chain: position.chain,
-                            symbol: position.token_symbol,
+                    // Precise PnL Calculation
+                    const buyPrice = Number(position.average_buy_price || 0);
+                    const sellPrice = tx.price_per_token;
+                    const amount = tx.amount;
+
+                    const trade_profit = (sellPrice - buyPrice) * amount;
+                    performanceMetrics.realized_pnl += trade_profit;
+
+                    if (trade_profit > 0) {
+                        performanceMetrics.winning_trades++;
+                    } else {
+                        performanceMetrics.losing_trades++;
+                    }
+
+                    if (detailed) {
+                        performanceMetrics.trades.push({
+                            token_symbol: position.token_symbol,
                             action: tx.action,
-                            amount: tx.amount,
-                            price: tx.price_per_token,
-                            profit,
+                            amount,
+                            buy_price: buyPrice,
+                            sell_price: sellPrice,
+                            profit: trade_profit,
                             timestamp: tx.timestamp
                         });
                     }
                 });
         });
 
-        res.status(200).json(history);
+        // Calculate Derived Metrics
+        performanceMetrics.win_rate = 
+            performanceMetrics.total_trades > 0 
+                ? (performanceMetrics.winning_trades / performanceMetrics.total_trades) * 100 
+                : 0;
+        
+        performanceMetrics.average_trade_size = 
+            performanceMetrics.total_trades > 0
+                ? performanceMetrics.total_volume / performanceMetrics.total_trades
+                : 0;
+
+        res.status(200).json(performanceMetrics);
     } catch (error) {
-        console.error('Error fetching trading history:', error);
-        res.status(500).json({ error: 'Failed to fetch trading history' });
+        console.error('Error in getTradingHistory:', error);
+        res.status(500).json({ 
+            error: 'Failed to retrieve trading history',
+            details: error.message 
+        });
     }
 };
 
