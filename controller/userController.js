@@ -629,10 +629,10 @@ try {
         return res.status(404).json({ error: 'User not found' });
     }
 
-    // Generate referral code if not exists
     if (!user.referral_code) {
         await exports.generateReferralCode({ params: { telegram_id } }, { status: () => ({ json: () => { } }) });
-        user = await User.findOne({ telegram_id });
+        const updatedUser = await User.findOne({ telegram_id });
+        // Then use updatedUser below instead of user
     }
 
     res.status(200).json({
@@ -644,6 +644,51 @@ try {
     console.error('Error fetching referral info:', error);
     res.status(500).json({ error: 'Failed to fetch referral info' });
 }
+};
+
+// Get all trading positions for a user
+exports.getTradingPositions = async (req, res) => {
+    try {
+        const { telegram_id } = req.params;
+        
+        const user = await User.findOne({ telegram_id });
+        
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        
+        res.json(user.trade_positions);
+    } catch (error) {
+        console.error('Error fetching trading positions:', error);
+        res.status(500).json({ error: 'Failed to fetch trading positions' });
+    }
+};
+
+// Get details of a specific position
+exports.getPositionDetails = async (req, res) => {
+    try {
+        const { telegram_id, token_address, chain } = req.params;
+        
+        const user = await User.findOne({ telegram_id });
+        
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        
+        const position = user.trade_positions.find(p => 
+            p.token_address.toLowerCase() === token_address.toLowerCase() && 
+            p.chain === chain
+        );
+        
+        if (!position) {
+            return res.status(404).json({ error: 'Position not found' });
+        }
+        
+        res.json(position);
+    } catch (error) {
+        console.error('Error fetching position details:', error);
+        res.status(500).json({ error: 'Failed to fetch position details' });
+    }
 };
 
 module.exports = exports;
